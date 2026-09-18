@@ -1,0 +1,12 @@
+{
+  "name": "kancil-vpn-gateway",
+  "version": "2.0.0",
+  "description": "Kancil VPN Railway Gateway with Full UDP Game Support",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  }
+}
