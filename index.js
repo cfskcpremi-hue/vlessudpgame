@@ -7,6 +7,7 @@ const udpManager = require('./udp');
 const PORT = process.env.PORT || 3000;
 const SYSTEM_UUID = process.env.SYSTEM_UUID || "c48619fe-8f02-49e0-b9e9-edf763e17e21";
 
+// Mapping Custom Path ke IP Target
 const PROXY_MAP = {
   "id-akamai": "172.232.249.224:2053",
   "id-deneva": "202.155.95.132:443",
@@ -41,7 +42,7 @@ class GatewayServer {
 
     if (parsedUrl.pathname === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json', ...CORS_HEADERS });
-      res.end(JSON.stringify({ status: 'healthy', uptime: Math.floor(process.uptime()), udpGameSupport: 'ACTIVE 🟢' }));
+      res.end(JSON.stringify({ status: 'healthy', uptime: Math.floor(process.uptime()), udpGameSupport: 'XUDP_ACTIVE 🟢' }));
       return;
     }
 
@@ -223,10 +224,9 @@ class GatewayServer {
       try {
         const chunk = Buffer.from(message);
 
-        // Deteksi apakah ini paket Handshake XUDP / Game Relay (`VLRLY004`)
+        // Deteksi handshake XUDP / Game Relay (`VLRLY004`)
         if (!isXudpRelay && chunk.length >= 8 && chunk.subarray(0, 8).equals(RELAY_MAGIC)) {
           isXudpRelay = true;
-          // Kirim balasan inisialisasi XUDP sukses (Byte 0x00)
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(Buffer.from([0]));
           }
@@ -234,12 +234,41 @@ class GatewayServer {
         }
 
         if (isXudpRelay) {
-          // Tangani paket game UDP langsung menggunakan udpManager
-          if (chunk.length > 2) {
+          // Parsing paket XUDP game secara dinamis ke target IP/Port asli
+          if (chunk.length > 4) {
             const dataLen = chunk.readUInt16BE(0);
-            const packetData = chunk.subarray(2, 2 + dataLen);
-            // Default target game / DNS routing
-            udpManager.handleOutbound("8.8.8.8", 53, packetData, ws, null, true);
+            let cursor = 2;
+            
+            if (cursor + 2 > chunk.length) return;
+            const targetPort = chunk.readUInt16BE(cursor);
+            cursor += 2;
+
+            if (cursor >= chunk.length) return;
+            const atyp = chunk[cursor];
+            cursor += 1;
+
+            let targetAddress = "";
+            if (atyp === 0x01) { // IPv4
+              if (cursor + 4 > chunk.length) return;
+              targetAddress = `${chunk[cursor]}.${chunk[cursor+1]}.${chunk[cursor+2]}.${chunk[cursor+3]}`;
+              cursor += 4;
+            } else if (atyp === 0x02) { // Domain
+              if (cursor >= chunk.length) return;
+              const domainLen = chunk[cursor];
+              cursor += 1;
+              if (cursor + domainLen > chunk.length) return;
+              targetAddress = chunk.subarray(cursor, cursor + domainLen).toString('utf8');
+              cursor += domainLen;
+            } else if (atyp === 0x03) { // IPv6
+              if (cursor + 16 > chunk.length) return;
+              targetAddress = "::1";
+              cursor += 16;
+            }
+
+            const packetData = chunk.subarray(cursor, cursor + dataLen);
+            if (targetAddress && targetPort && packetData.length > 0) {
+              udpManager.handleOutbound(targetAddress, targetPort, packetData, ws, null, true);
+            }
           }
           return;
         }
@@ -387,7 +416,7 @@ class GatewayServer {
     });
 
     server.listen(port, '0.0.0.0', () => {
-      console.log(`Kancil Gateway running on port ${port} with Game UDP Support`);
+      console.log(`Kancil Gateway running on port ${port} with Full Game UDP Support`);
     });
   }
 }
