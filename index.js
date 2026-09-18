@@ -7,7 +7,6 @@ const udpManager = require('./udp');
 const PORT = process.env.PORT || 3000;
 const SYSTEM_UUID = process.env.SYSTEM_UUID || "c48619fe-8f02-49e0-b9e9-edf763e17e21";
 
-// Mapping Custom Path ke IP Target
 const PROXY_MAP = {
   "id-akamai": "172.232.249.224:2053",
   "id-deneva": "202.155.95.132:443",
@@ -224,7 +223,6 @@ class GatewayServer {
       try {
         const chunk = Buffer.from(message);
 
-        // Deteksi handshake XUDP / Game Relay (`VLRLY004`)
         if (!isXudpRelay && chunk.length >= 8 && chunk.subarray(0, 8).equals(RELAY_MAGIC)) {
           isXudpRelay = true;
           if (ws.readyState === WebSocket.OPEN) {
@@ -234,7 +232,6 @@ class GatewayServer {
         }
 
         if (isXudpRelay) {
-          // Parsing paket XUDP game secara dinamis ke target IP/Port asli
           if (chunk.length > 4) {
             const dataLen = chunk.readUInt16BE(0);
             let cursor = 2;
@@ -248,18 +245,18 @@ class GatewayServer {
             cursor += 1;
 
             let targetAddress = "";
-            if (atyp === 0x01) { // IPv4
+            if (atyp === 0x01) {
               if (cursor + 4 > chunk.length) return;
               targetAddress = `${chunk[cursor]}.${chunk[cursor+1]}.${chunk[cursor+2]}.${chunk[cursor+3]}`;
               cursor += 4;
-            } else if (atyp === 0x02) { // Domain
+            } else if (atyp === 0x02) {
               if (cursor >= chunk.length) return;
               const domainLen = chunk[cursor];
               cursor += 1;
               if (cursor + domainLen > chunk.length) return;
               targetAddress = chunk.subarray(cursor, cursor + domainLen).toString('utf8');
               cursor += domainLen;
-            } else if (atyp === 0x03) { // IPv6
+            } else if (atyp === 0x03) {
               if (cursor + 16 > chunk.length) return;
               targetAddress = "::1";
               cursor += 16;
