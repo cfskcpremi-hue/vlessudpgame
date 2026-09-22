@@ -366,46 +366,53 @@ class GatewayServer {
 
   readFlashHeader(buf) {
     try {
-      const v = buf[0]; 
+      const v = buf[0];
       let udp = false;
-      const addLength = buf[17];
-      const cmdIndex = 18 + addLength;
-      const cmd = buf[cmdIndex];
-      if (cmd === 2) udp = true;
       
+      // Standar VLESS Header Parsing Presisi
+      // Byte [0]: Version
+      // Byte [1-16]: UUID (16 bytes)
+      // Byte [17]: Additional info length (s)
+      const s = buf[17];
+      const cmdIndex = 18 + s;
+      const cmd = buf[cmdIndex]; // 1 = TCP, 2 = UDP
+      
+      if (cmd === 2) udp = true;
+
       const portIndex = cmdIndex + 1;
       const pr = buf.readUInt16BE(portIndex);
+
+      const addrTypeIndex = portIndex + 2;
+      const at = buf[addrTypeIndex]; // 1 = IPv4, 2 = Domain, 3 = IPv6
       
-      let addrTypeIndex = portIndex + 2;
-      const at = buf[addrTypeIndex];
       let al = 0, avi = addrTypeIndex + 1, av = "";
-      
-      if (at === 1) { 
-        al = 4; 
-        av = Array.from(buf.slice(avi, avi+al)).join("."); 
-      } else if (at === 2) { 
-        al = buf[avi]; 
-        avi += 1; 
-        av = buf.slice(avi, avi+al).toString(); 
-      } else if (at === 3) { 
-        al = 16; 
-        const ip = []; 
-        for(let i=0; i<8; i++) ip.push(buf.readUInt16BE(avi + i * 2).toString(16)); 
-        av = ip.join(":"); 
+      if (at === 1) {
+        al = 4;
+        av = Array.from(buf.slice(avi, avi + al)).join(".");
+      } else if (at === 2) {
+        al = buf[avi];
+        avi += 1;
+        av = buf.slice(avi, avi + al).toString();
+      } else if (at === 3) {
+        al = 16;
+        const ip = [];
+        for (let i = 0; i < 8; i++) {
+          ip.push(buf.readUInt16BE(avi + i * 2).toString(16));
+        }
+        av = ip.join(":");
       }
-      
+
       const rawDataIndex = avi + al;
-      // Memastikan versi VLESS balasan diformat aman untuk mencegah EOF
       const vlessVersionHeader = Buffer.from([v, 0]);
 
-      return { 
-        hasError: false, 
-        addressRemote: av, 
-        portRemote: pr, 
-        rawDataIndex: rawDataIndex, 
-        rawClientData: buf.slice(rawDataIndex), 
-        version: vlessVersionHeader, 
-        isUDP: udp 
+      return {
+        hasError: false,
+        addressRemote: av,
+        portRemote: pr,
+        rawDataIndex: rawDataIndex,
+        rawClientData: buf.slice(rawDataIndex),
+        version: vlessVersionHeader,
+        isUDP: udp
       };
     } catch (err) {
       return { hasError: true, message: "Invalid VLESS header format" };
@@ -437,7 +444,6 @@ class GatewayServer {
       }
 
       if (header) {
-        // Mengirimkan header balasan VLESS tepat di awal data agar core klien tidak EOF
         webSocket.send(Buffer.concat([Buffer.from(header), chunk]));
         header = null;
       } else {
