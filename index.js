@@ -14,8 +14,8 @@ const PROXY_MAP = {
   "sg-oracle": "138.2.64.229:443"
 };
 
-const horse = Buffer.from("dHJvamFu", 'base64').toString(); // trojan
-const flash = Buffer.from("dm1lc3M=", 'base64').toString(); // vless
+const horse = "trojan";
+const flash = "vless";
 const RELAY_MAGIC = Buffer.from('VLRLY004', 'ascii');
 
 const CORS_HEADERS = {
@@ -275,12 +275,14 @@ class GatewayServer {
           return;
         }
 
-        const protocol = await this.protocolSniffer(chunk);
+        const protocol = this.protocolSniffer(chunk);
         let header;
 
-        if (protocol === horse) header = this.readHorseHeader(chunk);
-        else if (protocol === flash) header = this.readFlashHeader(chunk);
-        else header = this.readSsHeader(chunk);
+        if (protocol === horse) {
+          header = this.readHorseHeader(chunk);
+        } else {
+          header = this.readFlashHeader(chunk);
+        }
 
         if (header.hasError) throw new Error(header.message);
 
@@ -308,16 +310,16 @@ class GatewayServer {
     ws.on('error', () => udpManager.cleanupForWebSocket(ws));
   }
 
-  async protocolSniffer(buffer) {
+  protocolSniffer(buffer) {
+    // Trojan memiliki struktur CR LF (\r\n) pada byte 56-59
     if (buffer.length >= 62) {
-      const d = buffer.slice(58);
-      if (d.length >= 6) return horse;
+      const d = buffer.slice(56, 60);
+      if (d[0] === 0x0d && d[1] === 0x0a) {
+        return horse;
+      }
     }
-    // Deteksi akurat VLESS: Panjang minimal 19 byte dan pastikan memuat format UUID yang valid
-    if (buffer.length >= 19) {
-      return flash;
-    }
-    return "ss";
+    // Selain Trojan dipastikan sebagai VLESS untuk menghindari salah deteksi EOF
+    return flash;
   }
 
   async handleTCPOutBound(remoteSocket, addressRemote, portRemote, rawClientData, webSocket, responseHeader) {
@@ -353,29 +355,14 @@ class GatewayServer {
     }
   }
 
-  readSsHeader(buf) {
-    const at = buf[0]; let al = 0, avi = 1, av = "";
-    if (at === 1) { al = 4; av = Array.from(buf.slice(avi, avi+al)).join("."); }
-    else if (at === 3) { al = buf[avi]; avi += 1; av = buf.slice(avi, avi+al).toString(); }
-    else if (at === 4) { al = 16; const ip = []; for(let i=0;i<8;i++) ip.push(buf.readUInt16BE(avi+i*2).toString(16)); av = ip.join(":"); }
-    else return { hasError: true, message: `Invalid addr type: ${at}` };
-    const pi = avi + al;
-    const pr = buf.readUInt16BE(pi);
-    return { hasError: false, addressRemote: av, portRemote: pr, rawDataIndex: pi+2, rawClientData: buf.slice(pi+2), version: null, isUDP: pr === 53 || pr > 1024 };
-  }
-
   readFlashHeader(buf) {
     try {
       const v = buf[0];
       let udp = false;
       
-      // Pembacaan presisi struktur VLESS WebSocket:
-      // buf[0] = Version
-      // buf[1..16] = UUID (16 bytes)
-      // buf[17] = Additional info length (s)
       const s = buf[17];
       const cmdIndex = 18 + s;
-      const cmd = buf[cmdIndex]; // 1 = TCP, 2 = UDP
+      const cmd = buf[cmdIndex];
       
       if (cmd === 2) udp = true;
 
@@ -383,7 +370,7 @@ class GatewayServer {
       const pr = buf.readUInt16BE(portIndex);
 
       const addrTypeIndex = portIndex + 2;
-      const at = buf[addrTypeIndex]; // 1 = IPv4, 2 = Domain, 3 = IPv6
+      const at = buf[addrTypeIndex];
       
       let al = 0, avi = addrTypeIndex + 1, av = "";
       if (at === 1) {
