@@ -393,7 +393,7 @@ class GatewayServer {
         portRemote: pr,
         rawDataIndex: rawDataIndex,
         rawClientData: buf.slice(rawDataIndex),
-        version: null, // Diset null agar aliran data VLESS bersih tanpa header balasan kaku yang memicu EOF
+        version: null,
         isUDP: udp
       };
     } catch (err) {
@@ -407,7 +407,7 @@ class GatewayServer {
     let udp = db[0] === 3;
     let at = db[1]; let al = 0, avi = 2, av = "";
     if (at === 1) { al = 4; av = Array.from(db.slice(avi, avi+al)).join("."); }
-    else if (at === 3) { al = db[avi]; avi += 1; av = buf.slice(avi, avi+al).toString(); }
+    else if (at === 3) { al = db[avi]; avi += 1; av = db.slice(avi, avi+al).toString(); }
     else if (at === 4) { al = 16; const ip = []; for(let i=0;i<8;i++) ip.push(db.readUInt16BE(avi+i*2).toString(16)); av = ip.join(":"); }
     const pi = avi + al;
     const pr = db.readUInt16BE(pi);
@@ -423,7 +423,6 @@ class GatewayServer {
         remoteSocket.destroy(); 
         return; 
       }
-      // Langsung teruskan chunk data seperti Trojan, mencegah crash/EOF akibat respon header VLESS
       webSocket.send(chunk);
     });
 
