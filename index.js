@@ -15,7 +15,7 @@ const PROXY_MAP = {
 };
 
 const horse = Buffer.from("dHJvamFu", 'base64').toString(); // trojan
-const flash = Buffer.from("dm1lc3M=", 'base64').toString(); // vmess
+const flash = Buffer.from("dm1lc3M=", 'base64').toString(); // vmess/vless
 const RELAY_MAGIC = Buffer.from('VLRLY004', 'ascii');
 
 const CORS_HEADERS = {
@@ -310,11 +310,13 @@ class GatewayServer {
 
   async protocolSniffer(buffer) {
     if (buffer.length >= 62) {
-      const d = buffer.slice(56, 60);
-      if (d[0] === 0x0d && d[1] === 0x0a && [0x01,0x03,0x7f].includes(d[2]) && [0x01,0x03,0x04].includes(d[3])) return horse;
+      const d = buffer.slice(58);
+      if (d.length >= 6) return horse;
     }
-    const h = buffer.slice(1, 17).toString('hex');
-    if (h.match(/^[0-9a-f]{8}[0-9a-f]{4}4[0-9a-f]{3}[89ab][0-9a-f]{3}[0-9a-f]{12}$/i)) return flash;
+    if (buffer.length >= 18) {
+      const uuidBytes = buffer.slice(1, 17);
+      if (uuidBytes.length === 16) return flash;
+    }
     return "ss";
   }
 
@@ -363,15 +365,51 @@ class GatewayServer {
   }
 
   readFlashHeader(buf) {
-    const v = buf[0]; let udp = false;
-    const ol = buf[17]; const cmd = buf[18+ol];
-    if (cmd === 2) udp = true;
-    const pi = 18+ol+1; const pr = buf.readUInt16BE(pi);
-    let ai = pi+2; const at = buf[ai]; let al = 0, avi = ai+1, av = "";
-    if (at === 1) { al = 4; av = Array.from(buf.slice(avi, avi+al)).join("."); }
-    else if (at === 2) { al = buf[avi]; avi += 1; av = buf.slice(avi, avi+al).toString(); }
-    else if (at === 3) { al = 16; const ip = []; for(let i=0;i<8;i++) ip.push(buf.readUInt16BE(avi+i*2).toString(16)); av = ip.join(":"); }
-    return { hasError: false, addressRemote: av, portRemote: pr, rawDataIndex: avi+al, rawClientData: buf.slice(avi+al), version: Buffer.from([v,0]), isUDP: udp };
+    try {
+      const v = buf[0]; 
+      let udp = false;
+      const addLength = buf[17];
+      const cmdIndex = 18 + addLength;
+      const cmd = buf[cmdIndex];
+      if (cmd === 2) udp = true;
+      
+      const portIndex = cmdIndex + 1;
+      const pr = buf.readUInt16BE(portIndex);
+      
+      let addrTypeIndex = portIndex + 2;
+      const at = buf[addrTypeIndex];
+      let al = 0, avi = addrTypeIndex + 1, av = "";
+      
+      if (at === 1) { 
+        al = 4; 
+        av = Array.from(buf.slice(avi, avi+al)).join("."); 
+      } else if (at === 2) { 
+        al = buf[avi]; 
+        avi += 1; 
+        av = buf.slice(avi, avi+al).toString(); 
+      } else if (at === 3) { 
+        al = 16; 
+        const ip = []; 
+        for(let i=0; i<8; i++) ip.push(buf.readUInt16BE(avi + i * 2).toString(16)); 
+        av = ip.join(":"); 
+      }
+      
+      const rawDataIndex = avi + al;
+      // Memastikan versi VLESS balasan diformat aman untuk mencegah EOF
+      const vlessVersionHeader = Buffer.from([v, 0]);
+
+      return { 
+        hasError: false, 
+        addressRemote: av, 
+        portRemote: pr, 
+        rawDataIndex: rawDataIndex, 
+        rawClientData: buf.slice(rawDataIndex), 
+        version: vlessVersionHeader, 
+        isUDP: udp 
+      };
+    } catch (err) {
+      return { hasError: true, message: "Invalid VLESS header format" };
+    }
   }
 
   readHorseHeader(buf) {
@@ -388,18 +426,32 @@ class GatewayServer {
   }
 
   remoteSocketToWS(remoteSocket, webSocket, responseHeader, retry) {
-    let header = responseHeader, hasData = false;
+    let header = responseHeader;
+    let hasData = false;
+
     remoteSocket.on('data', (chunk) => {
       hasData = true;
-      if (webSocket.readyState !== WebSocket.OPEN) { remoteSocket.destroy(); return; }
+      if (webSocket.readyState !== WebSocket.OPEN) { 
+        remoteSocket.destroy(); 
+        return; 
+      }
+
       if (header) {
+        // Mengirimkan header balasan VLESS tepat di awal data agar core klien tidak EOF
         webSocket.send(Buffer.concat([Buffer.from(header), chunk]));
         header = null;
       } else {
         webSocket.send(chunk);
       }
     });
-    remoteSocket.on('close', () => { if (!hasData && retry) retry(); });
+
+    remoteSocket.on('close', () => { 
+      if (!hasData && retry) retry(); 
+    });
+
+    remoteSocket.on('error', () => {
+      if (webSocket.readyState === WebSocket.OPEN) webSocket.close();
+    });
   }
 
   start(port = PORT) {
